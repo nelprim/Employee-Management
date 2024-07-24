@@ -1,3 +1,4 @@
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.sql.*;
 import java.util.Date;
@@ -16,7 +17,7 @@ public class employee_mgmt {
     public Boolean isDeactivated;
     public Integer deptCode;
     public String officeCode;
-    public Date startDate;
+    public String startDate;
     public String endDate;
     public String reason;
     public double quota;
@@ -287,10 +288,12 @@ public class employee_mgmt {
             System.out.println("Employee Number - Name - Email - Office Code - Start Date - " +
                     "End Date - Reason - Quota - Manager Employee Number");
 
-                PreparedStatement pstmt = conn.prepareStatement("SELECT e.employeeNumber, e.lastName, e.firstName, e.email, sra.officeCode, sra.startDate, sra.endDate, " +
-                        "sra.reason, sra.quota, sra.salesManagerNumber" +
-                        "FROM employees e JOIN salesRepAssignments sra ON e.employeeNumber = sra.employeeNumber" +
-                        "WHERE e.employeeNumber = ? LOCK IN SHARE MODE");
+                PreparedStatement pstmt = conn.prepareStatement("SELECT e.employeeNumber, e.lastName, e.firstName, e.email, sra.officeCode, sra.startDate, sra.endDate, \n" +
+                        "       sra.reason, sra.quota, sra.salesManagerNumber\n" +
+                        "FROM employees e\n" +
+                        "JOIN salesRepAssignments sra ON e.employeeNumber = sra.employeeNumber\n" +
+                        "WHERE e.employeeNumber = ? \n" +
+                        "LOCK IN SHARE MODE;\n");
                 pstmt.setInt(1, eNumber);
                 PreparedStatement sleep = conn.prepareStatement("SELECT SLEEP(3)");
                 ResultSet rs = pstmt.executeQuery();
@@ -301,8 +304,8 @@ public class employee_mgmt {
                     firstname = rs.getString("firstName");
                     email = rs.getString("email");
                     officeCode = rs.getString("officeCode");
-                    startDate = rs.getDate("startDate");
-                    endDate = rs.getDate("endDate");
+                    startDate = rs.getString("startDate");
+                    endDate = rs.getString("endDate");
                     reason = rs.getString("reason");
                     quota = rs.getFloat("quota");
                     salesManagerNum = rs.getInt("salesManagerNumber");
@@ -379,42 +382,95 @@ public class employee_mgmt {
         }
 
     }
-    public int assign_salesRep(){
+    public int assign_salesRep() {
         Scanner sc = new Scanner(System.in);
         System.out.println("Enter Employee Number: ");
         eNumber = sc.nextInt();
+        sc.nextLine();
 
         System.out.println("Enter the following: ");
         System.out.println("Office Code: ");
         officeCode = sc.nextLine();
-        System.out.println("End Date (mm-dd-yyyy): ");
+        System.out.println("Start Date (yyyy-mm-dd): ");
+        startDate = sc.nextLine();
+        System.out.println("End Date (yyyy-mm-dd): ");
         endDate = sc.nextLine();
         System.out.println("Reason: ");
         reason = sc.nextLine();
         System.out.println("Quota: ");
-        quota = sc.nextFloat();
+        quota = sc.nextDouble();
         System.out.println("Sales Manager Number: ");
-        salesManagerNum = Integer.valueOf(sc.nextLine());
+        salesManagerNum = sc.nextInt();
         System.out.println("Your username: ");
         end_username = sc.nextLine();
         System.out.println("Reason for action: ");
         end_userreason = sc.nextLine();
 
-        try{
-            Connection conn;
-            conn = DriverManager.getConnection(dbUrl, dbUsername, dbPassword);
+        try (Connection conn = DriverManager.getConnection(dbUrl, dbUsername, dbPassword)) {
             System.out.println("Database Connected Successfully");
             conn.setAutoCommit(false);
 
-            PreparedStatement checkExist = conn.prepareStatement("SELECT * FROM salesRepAssignments WHERE " +
-                    "employeeNumber = ? LOCK IN SHARE MODE");
+            // Check if an entry exists for the employee
+            PreparedStatement checkExist = conn.prepareStatement(
+                    "SELECT endDate FROM salesRepAssignments WHERE employeeNumber = ? ORDER BY endDate DESC LIMIT 1 LOCK IN SHARE MODE");
             checkExist.setInt(1, eNumber);
+            PreparedStatement sleep = conn.prepareStatement("SELECT SLEEP(3)");
+            ResultSet rs = checkExist.executeQuery();
+            sleep.executeQuery();
 
 
+            SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+            Date newStartDate;
+            if (rs.next()) {
+                // If an existing entry is found, set the new start date to be the day after the existing end date
+                Date existingEndDate = rs.getDate("endDate");
+                java.util.Calendar calendar = java.util.Calendar.getInstance();
+                calendar.setTime(existingEndDate);
+                calendar.add(java.util.Calendar.DAY_OF_YEAR, 1);
+                newStartDate = new Date(calendar.getTimeInMillis());
+                startDate = dateFormat.format(newStartDate);
+            } else {
+                // If no existing entry is found, use the provided start date
+                newStartDate = new Date(dateFormat.parse(startDate).getTime());
+            }
 
+            // Check if the new assignment exceeds one month
+            java.util.Calendar calendar = java.util.Calendar.getInstance();
+            calendar.setTime(newStartDate);
+            calendar.add(java.util.Calendar.MONTH, 1);
+            Date maxEndDate = new Date(calendar.getTimeInMillis());
+            Date inputEndDate = new Date(dateFormat.parse(endDate).getTime());
+            if (inputEndDate.after(maxEndDate)) {
+                System.out.println("End date exceeds the maximum allowed one month period. Setting end date to one month from start date.");
+                endDate = dateFormat.format(maxEndDate);
+            }
+            // Insert the new assignment
+            PreparedStatement insertAssignment = conn.prepareStatement(
+                    "INSERT INTO salesRepAssignments (employeeNumber, officeCode, startDate, endDate, reason, " +
+                            "quota, salesManagerNumber, end_username, end_userreason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            insertAssignment.setInt(1, eNumber);
+            insertAssignment.setString(2, officeCode);
+            insertAssignment.setString(3, startDate);
+            insertAssignment.setString(4, endDate);
+            insertAssignment.setString(5, reason);
+            insertAssignment.setDouble(6, quota);
+            insertAssignment.setInt(7, salesManagerNum);
+            insertAssignment.setString(8, end_username);
+            insertAssignment.setString(9, end_userreason);
+            insertAssignment.executeUpdate();
 
+            System.out.println("Sales representative assigned successfully.");
+            System.out.println("Press any key to continue...");
+
+            sc.nextLine();
+            rs.close();
+            sleep.close();
+            checkExist.close();
+            insertAssignment.close();
+            conn.commit();
+            conn.close();
             return 1;
-        } catch (SQLException e) {
+        } catch (SQLException | java.text.ParseException e) {
             System.out.println(e.getMessage());
             return 0;
         }
